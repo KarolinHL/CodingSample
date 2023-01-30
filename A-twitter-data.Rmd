@@ -1,0 +1,115 @@
+# Part A. Processing and visualizing Twitter data
+
+
+Load all packages here:
+
+```{r}
+suppressMessages(library("tidyverse"))
+suppressMessages(library("maps"))
+suppressMessages(library("stringr"))
+suppressMessages(library("countrycode"))
+```
+
+
+1. The file `tweets.csv` contains around 100,000 geo-located tweets (each row is one tweet but the data does not contain the tweet texts) from 2020 and their automatically detected languages. Read the file into R and add country names derived from the geo-coordinates with the function `map.where()` from the `maps` package. Note that this function might return some outcomes like "country:region". Therefore, in these cases delete everything from the ":" onwards with a regular expression to only keep the country name. Next, using this newly created country name column and the `countrycode` package, also add a column with ISO-2 country codes (iso2c). You might need to add some country codes manually where associated country names are not recognized by iso2c. In the end, your data frame/tibble should have the columns latitude, longitude, language, country, and country code. (6 points)
+
+```{r}
+# Loading twitter file
+tweets <- read.csv("tweets.csv")
+
+# Adding country and country_code information
+tweets <- tweets %>% 
+          mutate(country = map.where("world", longitude, latitude),
+                 country = str_replace(country, ":.*", ""),
+                 country_code = countrycode(country, origin = "country.name", 
+                                            destination = "iso2c",
+                                            custom_match = c("Kosovo" = "XK")))
+
+# According to: https://laendercode.net/en/2-letter-code/xk
+# The country code for Kosovo is "XK"
+head(tweets)
+```
+
+
+2. Now examine the language data. How many unique languages did you find? Can you see which language code corresponds to tweets whose languages could not be predicted? __Delete the tweets/rows with undetermined language.__ Which are the most popular languages? (4 points)
+
+```{r}
+# Examining language data
+languages <- tweets %>% 
+             # Deleting rows with undetermined language
+             filter(language != "und") %>%
+             # Counting the number of tweets per language
+             group_by(language) %>%
+             summarise(n_tweets = n()) %>%
+             ungroup() %>%
+             # Sorting the data
+             arrange(-n_tweets)
+
+print(paste("Number of unique languages:", length(languages$language)))
+print("The most popular languages were:")
+head(languages)
+```
+
+
+3. Produce a map which displays the tweets with their location and also the language distribution by country. Have a look at Pablo Barberá's [Twitter profile](https://twitter.com/p_barbera) for a clue how this map could look like with color representing languages. (11 points)
+
+Hint: The map code from the streaming API examples can be a starting point here.
+
+```{r}
+# Creating a data frame with the map data 
+map.data <- map_data("world")
+
+# Plotting the map with ggplot2:
+tweets_map <- ggplot(map.data) + 
+              geom_map(aes(map_id = region), map = map.data, fill = "black", 
+                       color = "white", size = 0.25) + 
+              expand_limits(x = map.data$long, y = map.data$lat) + 
+              # Limits for x and y axis according to lat and lon
+              scale_x_continuous(limits=c(-23, 47)) + 
+              scale_y_continuous(limits = c(34, 68)) +
+              # Adding the dot for each tweet and specifying dot size, transparency, and colour
+              geom_point(data = tweets, 
+                         aes(x = longitude, y = latitude, colour = language), 
+                         size = 0.05, alpha = 1/5) +
+              # Removing unnecessary graph elements
+              theme(axis.line = element_blank(), 
+                  	axis.text = element_blank(), 
+                  	axis.ticks = element_blank(), 
+                    axis.title = element_blank(),
+                    legend.position = "none",
+                    panel.background = element_rect(fill = "black"), 
+                    panel.border = element_blank(), 
+                    panel.grid.major = element_blank(), 
+                    panel.grid.minor = element_blank(), 
+                    plot.background = element_blank())
+tweets_map
+
+# This map was adapted from the code provided in seminar week 8 available in: 
+# https://github.com/lse-my472/lse-my472.github.io/blob/master/week08/04-twitter-streaming-api.Rmd
+```
+
+
+4. Create a data frame with only four variables: `country`, `country_code`, `language`, and `n_tweets`, i.e. the number of tweets for each combination of country and language. To make it smaller, you can keep only the rows for which `n_tweets` is greater than 0! Save this data frame into a file called `part_a_country_language_distribution.csv` -- we will work with it in Part B. Which countries produced the most and the least tweets? (2 points)
+
+```{r}
+# Creating a new data frame with the information requested
+language_distribution <- tweets %>%
+                         # Removing latitude and longitude
+                         select(-longitude, -latitude) %>%
+                         # Removing undetermined languages
+                         filter(language != "und") %>%
+                         # Counting tweets by country and language
+                         group_by(country, country_code, language) %>%
+                         summarise(n_tweets = n()) %>%
+                         ungroup() %>% 
+                         arrange(-n_tweets)
+
+# Saving the data frame as a csv file
+write.csv(language_distribution, "part_a_country_language_distribution.csv")
+
+print("The countries with more tweets were:")
+head(language_distribution)
+print("The countries with least tweets were:")
+tail(language_distribution)
+```
+

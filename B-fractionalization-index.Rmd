@@ -1,0 +1,141 @@
+# Part B. Computing a language fractionalization index
+
+
+Load all packages here:
+
+```{r}
+#install.packages("vtable")
+suppressMessages(library("tidyverse"))
+suppressMessages(library("dplyr"))
+suppressMessages(library("countrycode"))
+suppressMessages (library("vtable"))
+```
+
+
+1. Read the `part_a_country_language_distribution.csv` file into R which you created with the counts of tweets per language and country. Use this dataset to compute a tweet-based index of language fractionalization at the country level using the formula in Equation (1) in the paper "Fractionalization" by Alesina et al (2003). Feel free to do this in the way you prefer, either using the tidyverse, or with loops and your own or base-R functions. (6 points)
+
+```{r}
+# Loading the csv file:
+language_distribution <- read.csv("part_a_country_language_distribution.csv", 
+                                  stringsAsFactors = FALSE)
+
+# Computing the tweet-based index of language fractionalization at the country level using the formula from Alesina et al.:
+data <- language_distribution %>% 
+        select(-X) %>%
+        group_by(country) %>% 
+        mutate(share = n_tweets / sum(n_tweets),
+               square = share^2) %>%
+        ungroup()
+index <- aggregate(square ~ country, 
+                   data = data,
+                   FUN = function(x) 1 - sum(x))
+
+# Aggregating the number of tweets per country & adding the country codes again:
+summary_tweets <- language_distribution %>% 
+                  group_by(country) %>% 
+                  summarise(tweets_collected = sum(n_tweets),.groups = 'drop') %>% 
+                  mutate(country_code = countrycode(country, origin = "country.name", 
+                                                    destination = "iso2c",
+                                                    custom_match = c("Kosovo" = "XK")))
+
+# Merging the two df into one so that we now have 3 variables & deleting redundant df
+fractionalization_index <- merge(summary_tweets, index, by = "country")
+rm(index, summary_tweets)
+```
+
+
+2. Compute some descriptive statistics for this data, either through tables or graphs. Which countries have the highest and lowest levels of tweet language fractionalization in this dataset? (5 points)
+
+```{r}
+# Descriptive statistics table 
+sumtable(fractionalization_index, add.median = TRUE, 
+         title = 'Summary Statistics for tweet language fractionalization data')
+
+# Which countries have the highest and lowest levels of tweet language fractionalization in this dataset?
+fractionalization_index %>% filter(square == min(square)) 
+fractionalization_index %>% filter(square == max(square))
+
+# Answer: Based on this dataset, Guernsey and Jersey have the lowest levels of tweet language fractionalization with a value of 0. Montenegro has the highest level of tweet language fractionalization with a value of 0.91. 
+
+# When looking only at the 12 countries for which we have at least 1000 tweets in their observations, we see that Belgium has the highest level of tweet language fractionalization with a value of 0.7401167:
+country_tweets <- fractionalization_index %>%
+                  filter(tweets_collected > 1000) %>%
+                  select(square, country, tweets_collected)
+                  
+tweets_plot <- ggplot(data = country_tweets, aes(x = country, y = square)) +
+               geom_bar(stat = "identity") +
+               theme_minimal()
+tweets_plot
+```
+
+
+3. Read the .csv file `fractionalization_alesina_et_al.csv` from the Alesina et al paper into R. Then, merge this data frame with the country-level fractionalization index you computed using Twitter data. This can be a bit painful due to the different spellings of the countries. You can e.g. again use the `countrycode` package to obtain corresponding country codes for the Alesina et al. data, or manually fix some of the country names so that they are the same across datasets. Throughout this process, check the sample size of the initial and final files to make sure you didn't drop any relevant countries. (5 points)
+
+```{r}
+# Loading the csv file from the Alesina et al paper into R
+datafile_alesina <- read.csv("fractionalization_alesina_et_al.csv", stringsAsFactors = FALSE)
+
+# Manually recoding some country names so they match across the two datasets
+fractionalization_index$country <- recode(fractionalization_index$country,
+                                          "UK" = "United Kingdom", 
+                                          "Macedonia"= "North Macedonia")
+
+datafile_alesina$country <- recode(datafile_alesina$country,
+                                   "Macedonia (Former Yug. Rep)" = "North Macedonia", 
+                                   "Russian Federation" = "Russia", 
+                                   "Slovak Republic" = "Slovakia")
+
+# Merging the two dataframes into one 
+final_data <- merge(datafile_alesina, fractionalization_index, by = "country")
+final_data$language <- as.numeric(final_data$language)
+
+# The merged dataset contains 42 countries. By merging we loose the following four countries: Guernsey, Kosovo and the two, former Yugoslavian countries, Montenegro and Serbia. Guernsey is emitted because Alesina et al. does not include it in their dataset. Montenegro and Serbia have to be dropped because, Alesina et al. has only one observation for former Yugoslavia, which in the index dataset has two values for each Montenegro and Serbia. However, given that Alesina et al. did not include an index value for Yugoslavian (thus Montenegro and Serbia), this is redundant.
+```
+
+
+4. Compare your new metric with the measure on language fractionalization from Alesina et al. What is the correlation between the two? For which sets of countries/observations do you find differences and similarities? Can you conjecture why? Do correlations between the two indices increase if you only look at countries with at least certain numbers of recorded tweets in the data? Use any statistical or graphical methods you find helpful to answer this question. (7 points)
+
+
+```{r}
+# What is the correlation between the two?
+cor(final_data$language, final_data$square, method = "pearson", use = "complete.obs")
+# Answer: The Pearson correlation coefficient between our new metric and Alesina et al.'s language fractionalization data is 0.3208508. For the Pearson coefficient to be significant, a value of over 0.5 would be ideal, thus we argue there is no significant correlation between the two indices. 
+
+# For which sets of countries/observations do you find differences and similarities? Can you conjecture why?
+final_data$difference <-  final_data$square-final_data$language
+max_diffence <- final_data %>% 
+                filter(difference > 0.5)  
+head(max_diffence, 10)
+min_diffence <- final_data %>% 
+                filter(difference < 0.01)
+head(min_diffence, 10)
+
+mean(max_diffence$tweets_collected)
+mean(min_diffence$tweets_collected)
+# Answer: The biggest differences between the two indices are found in Albania, Austria, Denmark, Hungary, Malta, Norway, Romania and Slovakia. The average number of tweets for those countries is 220. The smallest difference between the two indices are found in Andorra, Belarus, Latvia, Moldova, Netherlands, Russia, Spain and Turkey - for which the average number of tweets collected is 3710. Thus, there might be a relationship between the accuracy of our new metric and the sample size of tweets collected. 
+
+# Do correlations between the two indices increase if you only look at countries with at least certain numbers of recorded tweets in the data?
+  
+# Correlation with conditionality based on minimum number of tweets (500)
+max_tweets <- final_data %>%
+              filter(tweets_collected > 500) %>%
+              select(language, square, country, difference)
+cor(max_tweets$language, max_tweets$square, method = "pearson", use = "complete.obs")
+
+# Answer: Yes, the correlation changes when looking at observation with a minimum of 500 tweets. The Pearson correlation coefficient increases by roughly 0.33 to 0.6575, indicating a significant positive correlation between our new metric and Alesina et al.'s language fractionalization data. 
+```
+
+In the end, save your merged file under the name `part_b_fractionalization_output.csv`. It should contain the following columns: `country_code`, `country_name`, `tweets_collected`, `language_fractionalization_index_tweets`, `language_fractionalization_index_alesina_et_al.`
+
+```{r}
+# Renaming the columns 
+final_data <- final_data %>%
+              rename("language_fractionalization_index_alesina_et_al." = "language",
+                     "language_fractionalization_index_tweets" = "square",
+                     "country_name" = "country") %>% 
+              select(-difference)
+
+# Saving the new file 
+write.csv(final_data,'part_b_fractionalization_output.csv')
+```
+

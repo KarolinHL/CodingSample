@@ -1,0 +1,356 @@
+# Part C. APIs
+
+
+Load all packages here:
+
+```{r}
+suppressMessages(library("httr"))
+suppressMessages(library("jsonlite"))
+suppressMessages(library("tidyverse"))
+suppressMessages(library("sjPlot"))
+suppressMessages(library("plotly"))
+suppressMessages(library("countrycode"))
+```
+
+
+1. Next, the goal is to obtain country-level development indicators that may be related to linguistic fragmentation from the World Bank API. You can read the documentation and instructions of the API [here](https://datahelpdesk.worldbank.org/knowledgebase/articles/898581-basic-api-call-structures).
+
+Write your own function that will take an indicator code (e.g. `SP.POP.TOTL`) as input, query the API, parse the JSON output into R, and then return a clean data frame where each row is a country. Feel free to take a look at the following [code](https://github.com/vincentarelbundock/WDI/blob/master/R/WDI.R) for some clues on how to query the API. (12 points)
+
+Note: If you are not able to figure this exercise out, you can use the `WDI` package in the next exercises in order to be able to continue with the assignment.
+
+```{r} 
+get_WDI <- function(indicator) {
+  # Description: function that gets the indicators stated from the World Bank API
+    # args:
+      # indicator: a string of length n with the name of the indicator
+    # returns: 
+      # data_indicator: a data frame with the indicator by country/year
+  
+  tryCatch({
+    # Calling the API
+    url_indicator <- paste0("http://api.worldbank.org/v2/country/all/indicator/", indicator, "?format=json")
+    
+    # Loading the data from the API
+    raw_data <- GET(url = url_indicator) %>% 
+                content("text", encoding = "UTF-8") %>%
+                # automatically 'flatten' nested data frames into a single non-nested data frame
+                fromJSON(flatten = TRUE)
+
+    # Total number of observations in list 1
+    total_obs <- raw_data[[1]]$total
+    
+    # Overwriting url_indicator and raw_data to collect all obs
+    url_indicator <- paste0("http://api.worldbank.org/v2/country/all/indicator/", indicator, "?format=json&per_page=", total_obs)
+    
+    # Loading again the data from the API
+    raw_data <- GET(url = url_indicator) %>% 
+                content("text", encoding = "UTF-8") %>%
+                # automatically 'flatten' nested data frames into a single non-nested data frame
+                fromJSON(flatten = TRUE)
+
+# Transforming the data (in list 2) into a data frame
+    data_indicator <- raw_data[[2]] %>%
+                      data.frame() %>% 
+                      mutate(country_code = countrycode(countryiso3code, 
+                                                        origin = "iso3c", 
+                                                        destination = "iso2c"))
+    
+    return(data_indicator)},
+    error = function(e){"This is not a valid indicator"})
+}
+
+# This code was adapted from:
+# https://stackoverflow.com/questions/59985218/world-bank-api-query
+```
+
+
+2. Using the function you just created, download country-level data on GDP per capita and other indicators and metrics that could be relevant (see the Alesina et al paper for inspiration). Merge this new country-level dataset with the dataset `part_b_fractionalization_output.csv` that you created at the end of Part B. As before, you may need to fix some of the country names to ensure that all countries can be merged. (4 points)
+
+```{r}
+# Reading the dataset generated from Part B
+PartB_data <- read.csv('part_b_fractionalization_output.csv', stringsAsFactors = FALSE)
+
+# Using the API query function to get WDI data, dates selected based on the availability of data
+
+GDP_per_capita <- get_WDI("NY.GDP.PCAP.CD") %>% 
+                  select(country_code, date, value) %>% 
+                  mutate (date = as.numeric(date)) %>% 
+                  filter(date >= 2015 & date <= 2020) %>% 
+                  group_by(country_code) %>% 
+                  summarise(mean_GDPpc = mean(value)) %>% 
+                  ungroup()
+
+Unemployment_rate <- get_WDI("SL.UEM.TOTL.ZS") %>% 
+                     select(country_code, date, value) %>% 
+                     mutate (date = as.numeric(date)) %>% 
+                     filter(date >= 2015 & date <= 2020) %>% 
+                     group_by(country_code) %>% 
+                     summarise(mean_unemployment = mean(value)) %>% 
+                     ungroup()
+
+Gini_index <- get_WDI("SI.POV.GINI") %>% 
+              select(country_code, date, value) %>% 
+              mutate (date = as.numeric(date)) %>% 
+              filter(date >= 2015 & date <= 2020) %>% 
+              group_by(country_code) %>% 
+              summarise(mean_gini = mean(value)) %>% 
+              ungroup()
+
+Life_Expectacy <- get_WDI("SP.DYN.LE00.IN") %>% 
+                  select(country_code, date, value) %>% 
+                  mutate (date = as.numeric(date)) %>% 
+                  filter(date >= 2015 & date <= 2020) %>% 
+                  group_by(country_code) %>% 
+                  summarise(mean_Life_Expectacy = mean(value)) %>% 
+                  ungroup()
+
+Literacy <- get_WDI("SE.ADT.LITR.ZS") %>% 
+            select(country_code, date, value) %>% 
+            mutate (date = as.numeric(date)) %>% 
+            filter(date >= 2015 & date <= 2020) %>% 
+            group_by(country_code) %>% 
+            summarise(Literacy_mean = mean(value)) %>% 
+            ungroup()
+
+Infant_Mortality <- get_WDI("SP.DYN.IMRT.IN") %>% 
+                    select(country_code, date, value) %>% 
+                    mutate (date = as.numeric(date)) %>% 
+                    filter(date >= 2015 & date <= 2020) %>% 
+                    group_by(country_code) %>% 
+                    summarise(Infant_Mortality_mean = mean(value)) %>% 
+                    ungroup()
+
+Mobile_Sub <- get_WDI("IT.CEL.SETS.P2") %>% 
+              select(country_code, date, value) %>% 
+              mutate (date = as.numeric(date)) %>% 
+              filter(date >= 2015 & date <= 2020) %>% 
+              group_by(country_code) %>% 
+              summarise(mean_Mobile_Sub = mean(value)) %>% 
+              ungroup()
+
+# Merging tables
+all_data <- list(PartB_data, GDP_per_capita, Unemployment_rate, Gini_index, 
+                 Life_Expectacy, Literacy, Mobile_Sub, Infant_Mortality)
+merged_data <- all_data %>% reduce(left_join, by = "country_code")
+head(merged_data)
+
+rm(PartB_data, Unemployment_rate, Gini_index, Life_Expectacy, Infant_Mortality, Literacy, Mobile_Sub)
+
+# We collected data on GDP per capita, unemployment rates, the Gini Index, life expectancy, literacy and mobile phone subscriptions. As many countries do not have data for most recent years, we decided to take the average value between 2015 and 2020. By using the average value of those 5 years we can maximize the amount of countries included in the dataset. 
+```
+
+
+For the remaining exercises use any summary figures, visualization, statistical analyses, etc. that you find helpful to answer the questions. More extensive, insightful, polished, and well described answers will receive higher marks. Also see the assessment criteria on the course website https://lse-my472.github.io/
+
+
+3. Using the language fractionalization index from the Alesina et al. paper and data downloaded from the World Bank API, can you roughly replicate some of the findings from the paper? For example, Tables 5 and 8 or other findings? (10 points)
+
+```{r}
+
+# Calculating the correlations between variables
+correlation <- cor(merged_data[c("language_fractionalization_index_alesina_et_al.", "mean_unemployment", "mean_Life_Expectacy", "mean_Mobile_Sub", "Infant_Mortality_mean", "mean_GDPpc")], use = "complete.obs", method = "pearson")
+
+# Replicating Table 5: 
+table5 <- tab_corr(correlation,
+          title = "Replication of Table 5: Correlation between the linguistic fractionalization and development indicators.",
+          triangle = "lower",
+          string.diag = c(rep(1, times = ncol(correlation))), #correlation of the same variable equals 1 
+          fade.ns = FALSE)
+
+table5
+
+# In the replication of Table 5, the strongest correlation is between the mean life expectancy and Alesina et al.'s index with a value of -0.339. 
+
+# Regression Analysis
+regression1 = lm(mean_GDPpc ~ language_fractionalization_index_alesina_et_al. + 
+                             mean_unemployment + mean_Life_Expectacy + 
+                              Infant_Mortality_mean, data = merged_data) 
+regression2 = lm(mean_GDPpc ~ language_fractionalization_index_alesina_et_al. + 
+                             mean_unemployment + mean_Life_Expectacy  +
+                            Infant_Mortality_mean + 
+                            mean_Mobile_Sub, data = merged_data) 
+summary(regression1)
+
+# Replicating of Table 8:
+table8 <- tab_model(regression1, regression2, title ="Replication of Table 8. Language diversity and Development Indicators (Dependent Variable: 5-year Mean of GDP per capita")
+
+table8
+
+# In replicating table 8, we ran two step-wise linear regressions with the five-year average of GDP per capita. In contradiction with the Alesina et al.'s analysis - our analysis shows a significant positive relationship between language fictionalization and GDP per capita (p = 0.008). This outcomes does not align with the hypothesis of the paper. 
+```
+
+
+4. Using the language fractionalization Twitter-based index which you built, can you find interesting correlations with indicators from the World Bank or is the Twitter data too noisy? Are correlations stronger when only countries are considered for which at least a certain amount of tweets were contained in the dataset? A starting point could be to repeat some outcome from 3. now with the Twitter-based index.
+
+A word of caution when interpreting these results:  We can form hypotheses based on such findings, but only from the fact that variables co-move/correlate even when controlling for some others variables in a regression, we cannot say whether they cause each other to move or not [link](https://en.wikipedia.org/wiki/Correlation_does_not_imply_causation) (7 points)
+
+```{r}
+# Correlating the language fractionalization Twitter-based index with WDI  (total of 42 countries)
+correlation_twitter <- cor(merged_data[c("language_fractionalization_index_tweets", "mean_unemployment", "mean_Life_Expectacy", "mean_Mobile_Sub", "Infant_Mortality_mean", "mean_GDPpc")], use = "complete.obs", method = "pearson")
+
+# Creating a table 
+table2 <- tab_corr(correlation_twitter,
+          title = "Correlation between the linguistic fractionalization and development indicators.",
+          triangle = "lower",
+          #correlation of the same variable equals 1 
+          string.diag = c(rep(1, times = ncol(correlation))), 
+          fade.ns = FALSE)
+
+table2
+
+# Correlating the language fractionalization Twitter-based index with WDI only using countries that have over 500 tweets (total of 17 countries)
+
+# Add condition of min 500 tweets 
+max_tweets <- merged_data %>%
+              filter(tweets_collected > 500) 
+
+correlation_tweets <- cor(max_tweets[c("language_fractionalization_index_tweets", "mean_unemployment", "mean_Life_Expectacy", "mean_Mobile_Sub", "Infant_Mortality_mean", "mean_GDPpc")], use = "complete.obs", method = "pearson")
+
+# Creating a table 
+table3 <- tab_corr(correlation_tweets,
+          title = "Correlation between the linguistic fractionalization and development indicators.",
+          triangle = "lower",
+          string.diag = c(rep(1, times = ncol(correlation))), #correlation of the same variable equals 1 
+          fade.ns = FALSE)
+
+table3
+
+# When correlating the language fractionalization Twitter-based index with WDI without any twitter conditions, we cannot identify any correlations between the WDIs and our index, as the highest correlation is for the mean GDP per capita with a value of 0.130. When adding the conditionality of a minimum of 500 tweets, the correlation values increase. The correlation between the mean GDP per capita and our language fractionalization Twitter-based index increased from 0.130 to 0.332. All other variables also increase in absolute value and two change the direction from positive to negative correlation (i.e.Infant Mortality and Unemployment). Thus, we can argue that looking at countries with at least 500 tweets gives a more accurate representation of the countries' language fractionalization. However, it is important to note that by adding this conditionality we also loose 15 observations/countries of our sample. 
+```
+
+
+5. Moving away from language fractionalization, next explore the Athena API from the World Health Organizsation https://www.who.int/data/gho/info/athena-api as one further example of an API. Read into its documentation and decide on some data to query using the `httr` package. Then analyze cross-country differences that you are interested in through a series of visualizations and computations based on the WHO and World Bank data. For ideas on visualizing cross-country differences, e.g. have a look at the website https://ourworldindata.org/. Yet, all data to answer the question needs to be obtained from the WHO Athena API and World Bank API through code in this document. (20 points)
+
+``` {r}
+# Function to query the WHO API to ask for data
+get_WHO <- function(indicator){
+    # Description: function that gets the indicators stated from the WHO API
+    # args:
+      # indicator: a string of length n with the name of the indicator
+    # returns: 
+      # WHO_indicator: a data frame with the indicator
+  tryCatch({
+    # Calling the API
+    WHO_API <- paste0("http://apps.who.int/gho/athena/api/GHO/", indicator, "?format=json") 
+    WHO_data <- GET(url = WHO_API) %>% 
+                content("text", encoding = "UTF-8") %>%
+                fromJSON(flatten = TRUE)
+    
+    WHO_indicator <- WHO_data[[5]] %>% 
+                     tibble() %>% 
+                     # Unnesting the nested Json.
+                     # Ref: https://medium.com/@Periscopic/cozy-collecting-part-2-5e717588e37b
+                     unnest_wider(Dim) %>% 
+                     unnest(category, code) %>% 
+                     pivot_wider(names_from = category, values_from = code) %>% 
+                     mutate(country_code = countrycode(COUNTRY, 
+                                                       origin = "iso3c", 
+                                                       destination = "iso2c"))
+    
+    return(WHO_indicator)},
+    error = function(e){"Not a valid indicator"})
+}
+
+# Calling the WHO API to get obesity rate among adults in different regions and countries
+Obesity_rate <- get_WHO("NCD_BMI_30C")
+
+# Cleaning the data for merging and visualization (filtering out unnecessary information)
+Obesity_rate <- Obesity_rate %>% 
+                select(country_code, SEX, YEAR, REGION, value.numeric) %>%  
+                filter(!is.na(country_code))
+
+#Calculating the average obesity rate in each country from 2015 to 2020
+Obesity_rate <- Obesity_rate %>% 
+                mutate(YEAR = as.numeric(YEAR)) %>% 
+                filter(YEAR >= 2015 & YEAR <= 2020) %>% 
+                group_by(country_code, REGION) %>% 
+                summarise(Average_obesity = round(mean(value.numeric), 2)) %>%
+                ungroup()
+                                                                                                
+# Merging the data sets of GDP per capita and the obesity rate
+Obesity_GDPpc <- merge(GDP_per_capita, Obesity_rate, by = "country_code", all.x = TRUE) %>%
+                 mutate(COUNTRY = countrycode(country_code, origin = "iso2c",
+                                              destination = "country.name"),
+                        mean_GDPpc = round(mean_GDPpc, 2)) %>% na.omit()
+
+# Visualizing a scatter plot
+relation_fig <- plot_ly(data = Obesity_GDPpc,
+                        x = ~mean_GDPpc,
+                        y = ~Average_obesity) %>% 
+                # Plotting the points
+                add_trace(type = "scatter", mode = "markers",    
+                          # Adding styles for the region categorization            
+                          color = ~REGION,
+                          opacity = 0.7,
+                          marker = list(size = 10),               
+                          # Adding hover text info for an interactive interface
+                          size = 1.5,
+                          hoverinfo = "text",
+                          text = ~paste0("Country: ", COUNTRY,
+                                         "<br>Region: ", REGION,
+                                         "<br>Average GDP Per Capita USD (2015-2020): ", mean_GDPpc,
+                                         "<br>Average Adult Obesity Rate (2015-2020): ", Average_obesity, "%")) %>% 
+                # Formatting the plot
+                layout(xaxis = list(title = "Average GDP Per Capita USD (2015-2020)",
+                                    type = "log",
+                                    tickvals = c(500, 1000, 5000, 10000, 50000, 100000)),
+                       yaxis = list(title = "Average Adult Obesity Rate (2015-2020)"),
+                       title = "Relationship between GDP Per Capita and Adult Obesity Rate")
+
+
+regression_line <- lm(Average_obesity ~ log(mean_GDPpc), Obesity_GDPpc)
+summary(regression_line)
+
+# Interpretation: 
+# Given the results, we can see that GDP per capita shows a positive relation with obesity rate.
+# The estimate parameter of log(GDP) is 4.4489, in other words, an increase of 1% in the GDP per capita increases in 4.4489*log(1.01) = 0.04 the obesity rate. Besides, this parameter is statistically significant at 95%. Nevertheless, the R square is 0.3, which means that the dependent variable explains little of the independent variable.
+
+# Adding regression line
+relation_fig <- relation_fig %>% 
+                add_lines(data = Obesity_GDPpc,
+                          x = ~mean_GDPpc,
+                          y = ~fitted(regression_line),
+                          line = list(width = 1, dash = "dot", color="blue"),
+                          showlegend = FALSE,
+                          hoverinfo = "none",
+                          mode = "lines") %>% 
+                 # Changing legend's position
+                 layout(xaxis = list(showgrid = FALSE),
+                        yaxis = list(showgrid = FALSE),
+                        legend = list(y = 0.5,
+                        font = list(size = 10))) 
+
+relation_fig
+
+# Creating a density plot to show the distribution of obesity rate by region
+density_plot <- ggplot(Obesity_GDPpc) +
+                geom_density(aes(x = Average_obesity, 
+                                 fill = REGION),
+                                  color = NA) + 
+                scale_fill_manual(values = alpha(c("green", "orange", "blue", 
+                                                   "purple", "red", "yellow"), 0.4)) +
+                # Removing background color and grids
+                theme(legend.position = "bottom",
+                      panel.background = element_blank(),
+                      panel.grid = element_blank(),
+                      axis.line.y = element_blank(), 
+                      axis.ticks.y = element_blank(), 
+                      axis.text.y = element_blank(), 
+                      axis.title.y = element_blank()) +
+                # Editing the title
+                labs (title = "Distribution of Average Obesity Rate (2015-2020) by Region") +
+                theme(plot.title = element_text(size = 10, face = "bold", hjust = 0.5)) +
+                xlab("Average Obesity Rate (2015-2020)") +
+                scale_y_continuous(expand = expansion (mult = 0, add = c(0, 0)))
+  
+density_plot
+
+# Annotations: "WHO Region Classification: African Region (AFR), Americas Region (AMR), South-East Asian Region (SEAR), European Region (EUR), Eastern Mediterranean Region (EMR), Western Pacific Region (WPR)
+
+#Findings: 
+# 1. there is a positive correlation between the GDP per capita and the obesity rate. As we see in the regression analysis the obesity rate increases as GDP increases possibly because GDP is positive correlated with welfare.  
+# 2. In terms of region, fluent countries (e.g Europe and North America) generally showed a greater tendency of obesity, and vice versa (e.g. Africa). However, the west pacific region showed a great disparity. 
+# 3. In general, the Asian part of the region (such as China, Japan, and Korea) had an average obesity rate much lower than the average, while the oceania had the obesity rate much higher than the average.
+# 4. Most of countries had an obesity rate between 20% and 40%.
+```
